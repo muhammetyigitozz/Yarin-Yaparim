@@ -2,6 +2,8 @@
 
 Projeler için hafif, koyu temalı bir masaüstü yapılacaklar listesi. Rust + [Slint](https://slint.dev) ile yazıldı; Windows ve Linux'ta tray'de yaşar.
 
+![Yarın Yaparım: ana pencere ve tray paneli](docs/ekran.png)
+
 ## Özellikler
 - Projeler (renkli), görevler, alt görevler, öncelik, sürükle-bırak sıralama
 - Deadline'lı veya deadline'sız görev; Türkçe hızlı giriş:
@@ -13,6 +15,13 @@ Projeler için hafif, koyu temalı bir masaüstü yapılacaklar listesi. Rust + 
 - Tray paneli: sol tık veya **Ctrl+Space** (sol alttaki "Panel kısayolu" yazısına tıklayıp değiştirilebilir) → geciken ve 7 gün içindeki işler, proje seçerek hızlı ekleme
 - Tek örnek; Windows açılışında gizli başlar (`--hidden`)
 - Veriler: Windows'ta `%APPDATA%\YarinYaparim\veri.db`, Linux'ta `~/.local/share/YarinYaparim/veri.db` (SQLite)
+
+## Ekranlar
+| Ana pencere | Tray paneli (Ctrl+Space) |
+|---|---|
+| ![Ana pencere](docs/ana-pencere.png) | ![Tray paneli](docs/panel.png) |
+
+Ana pencerede bir göreve tıklayınca açılır: başlık, deadline, alt görevler, öncelik. Panelde geciken ve 7 gün içindeki işler proje proje görünür; alttaki çizgi deadline yaklaştıkça dolar.
 
 ## Derleme (Windows)
 ```
