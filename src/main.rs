@@ -220,7 +220,11 @@ pub fn log(msg: &str) {
 }
 
 fn data_path() -> std::path::PathBuf {
-    let base = std::env::var_os("APPDATA").map(std::path::PathBuf::from).unwrap_or_else(|| std::path::PathBuf::from("."));
+    use std::path::PathBuf;
+    let base = std::env::var_os("APPDATA").map(PathBuf::from)
+        .or_else(|| std::env::var_os("XDG_DATA_HOME").map(PathBuf::from))
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("share")))
+        .unwrap_or_else(|| PathBuf::from("."));
     let dir = base.join("YarinYaparim");
     let _ = std::fs::create_dir_all(&dir);
     dir.join("veri.db")
@@ -241,6 +245,17 @@ fn show_panel(ui: &AppWindow, panel: &TrayPanel) {
         panel.window().set_position(slint::PhysicalPosition::new(r - pw - m, b - ph - m));
     }
     let _ = panel.show();
+    #[cfg(not(windows))]
+    panel.window().with_winit_window(|w| {
+        // Linux/X11: sağ alt köşe (Wayland konumu yok sayar)
+        if let Some(m) = w.current_monitor() {
+            let (mp, ms, ps) = (m.position(), m.size(), w.outer_size());
+            let mg = (12.0 * sf) as i32;
+            w.set_outer_position(winit::dpi::PhysicalPosition::new(
+                mp.x + ms.width as i32 - ps.width as i32 - mg,
+                mp.y + ms.height as i32 - ps.height as i32 - mg - (48.0 * sf) as i32));
+        }
+    });
     panel.window().with_winit_window(|w| {
         #[cfg(windows)]
         {
@@ -256,7 +271,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let hidden = std::env::args().any(|a| a == "--hidden");
     std::panic::set_hook(Box::new(|info| log(&format!("PANİK: {info}"))));
     log(&format!("başladı (gizli: {hidden})"));
-    let Some(instance) = platform::single_instance() else { return Ok(()) };
+    let want_panel = std::env::args().any(|a| a == "--panel");
+    let Some(instance) = platform::single_instance(if want_panel { "panel" } else { "show" }) else { return Ok(()) };
 
     let ui = AppWindow::new()?;
     let panel = TrayPanel::new()?;
@@ -439,8 +455,8 @@ fn main() -> Result<(), slint::PlatformError> {
         timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(80), move || {
             let Some(u) = w.upgrade() else { return };
             let panel = &app.panel;
-            if instance.show_requested() { show_main(&u); }
-            let evs = shell.borrow().as_ref().map(|s| s.poll()).unwrap_or_default();
+            let mut evs = instance.poll();
+            evs.extend(shell.borrow().as_ref().map(|s| s.poll()).unwrap_or_default());
             {
                 for ev in evs {
                     match ev {
@@ -475,7 +491,7 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     if !hidden { let _ = ui.show(); }
-    if std::env::var_os("YY_PANEL").is_some() { show_panel(&ui, &panel); }
+    if want_panel || std::env::var_os("YY_PANEL").is_some() { show_panel(&ui, &panel); }
     let r = slint::run_event_loop_until_quit();
     log(&format!("olay döngüsü bitti: {:?}", r.as_ref().err()));
     r

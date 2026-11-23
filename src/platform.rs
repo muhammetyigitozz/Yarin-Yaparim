@@ -26,7 +26,7 @@ mod imp {
     /// Tek örnek: zaten çalışıyorsa onu öne getirtip None döner.
     pub struct Instance { ev: HANDLE, _mutex: HANDLE }
 
-    pub fn single_instance() -> Option<Instance> {
+    pub fn single_instance(_cmd: &str) -> Option<Instance> {
         unsafe {
             let m = CreateMutexW(std::ptr::null(), 0, w("Local\\YarinYaparim.Mutex").as_ptr());
             if GetLastError() == ERROR_ALREADY_EXISTS {
@@ -40,8 +40,8 @@ mod imp {
     }
 
     impl Instance {
-        pub fn show_requested(&self) -> bool {
-            !self.ev.is_null() && unsafe { WaitForSingleObject(self.ev, 0) } == WAIT_OBJECT_0
+        pub fn poll(&self) -> Vec<Ev> {
+            if !self.ev.is_null() && unsafe { WaitForSingleObject(self.ev, 0) } == WAIT_OBJECT_0 { vec![Ev::OpenMain] } else { vec![] }
         }
     }
 
@@ -131,12 +131,139 @@ mod imp {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+mod imp {
+    use super::Ev;
+    use global_hotkey::{hotkey::{Code, HotKey, Modifiers}, GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
+    use ksni::blocking::TrayMethods;
+    use std::io::{Read, Write};
+    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::path::PathBuf;
+    use std::sync::mpsc::{channel, Receiver, Sender};
+
+    fn sock_path() -> PathBuf {
+        match std::env::var_os("XDG_RUNTIME_DIR") {
+            Some(d) => PathBuf::from(d).join("yarinyaparim.sock"),
+            None => PathBuf::from(format!("/tmp/yarinyaparim-{}.sock", std::env::var("USER").unwrap_or_default())),
+        }
+    }
+
+    /// Tek örnek: Unix soketi. Zaten çalışıyorsa komutu (show/panel) ona iletip None döner.
+    pub struct Instance { l: Option<UnixListener> }
+
+    pub fn single_instance(cmd: &str) -> Option<Instance> {
+        let p = sock_path();
+        if let Ok(mut s) = UnixStream::connect(&p) {
+            let _ = s.write_all(cmd.as_bytes());
+            return None;
+        }
+        let _ = std::fs::remove_file(&p);
+        let l = UnixListener::bind(&p).ok();
+        if let Some(l) = &l { let _ = l.set_nonblocking(true); }
+        Some(Instance { l })
+    }
+
+    impl Instance {
+        pub fn poll(&self) -> Vec<Ev> {
+            let mut out = vec![];
+            if let Some(l) = &self.l {
+                while let Ok((mut s, _)) = l.accept() {
+                    let _ = s.set_read_timeout(Some(std::time::Duration::from_millis(200)));
+                    let mut b = String::new();
+                    let _ = s.read_to_string(&mut b);
+                    out.push(if b.trim() == "panel" { Ev::Hotkey } else { Ev::OpenMain });
+                }
+            }
+            out
+        }
+    }
+
+    fn desktop_file() -> Option<PathBuf> {
+        let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
+        Some(base.join("autostart").join("yarinyaparim.desktop"))
+    }
+
+    pub fn set_autostart(on: bool) {
+        let Some(f) = desktop_file() else { return };
+        if on {
+            let Ok(exe) = std::env::current_exe() else { return };
+            let _ = std::fs::create_dir_all(f.parent().unwrap());
+            let _ = std::fs::write(&f, format!(
+                "[Desktop Entry]\nType=Application\nName=Yarın Yaparım\nExec=\"{}\" --hidden\nX-GNOME-Autostart-enabled=true\n",
+                exe.display()));
+        } else {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
+    pub fn work_area() -> Option<(i32, i32, i32, i32)> { None }
+
+    struct Tray { tx: Sender<Ev>, auto: bool }
+
+    impl ksni::Tray for Tray {
+        fn id(&self) -> String { "yarinyaparim".into() }
+        fn title(&self) -> String { "Yarın Yaparım".into() }
+        fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+            // RGBA → ARGB
+            let rgba = include_bytes!("../ui/tray32.rgba");
+            let data = rgba.chunks(4).flat_map(|c| [c[3], c[0], c[1], c[2]]).collect();
+            vec![ksni::Icon { width: 32, height: 32, data }]
+        }
+        fn activate(&mut self, _x: i32, _y: i32) { let _ = self.tx.send(Ev::PanelToggle); }
+        fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
+            use ksni::menu::*;
+            vec![
+                StandardItem { label: "Ana pencere".into(), activate: Box::new(|t: &mut Self| { let _ = t.tx.send(Ev::OpenMain); }), ..Default::default() }.into(),
+                StandardItem { label: "Panel".into(), activate: Box::new(|t: &mut Self| { let _ = t.tx.send(Ev::Hotkey); }), ..Default::default() }.into(),
+                CheckmarkItem { label: "Oturumla başlat".into(), checked: self.auto, activate: Box::new(|t: &mut Self| {
+                    t.auto = !t.auto;
+                    let _ = t.tx.send(Ev::AutostartToggled(t.auto));
+                }), ..Default::default() }.into(),
+                MenuItem::Separator,
+                StandardItem { label: "Çık".into(), activate: Box::new(|t: &mut Self| { let _ = t.tx.send(Ev::Quit); }), ..Default::default() }.into(),
+            ]
+        }
+    }
+
+    pub struct Shell {
+        _tray: ksni::blocking::Handle<Tray>,
+        _hk: Option<GlobalHotKeyManager>,
+        rx: Receiver<Ev>,
+        pub hotkey_label: String,
+    }
+
+    pub fn shell(autostart: bool) -> Result<Shell, String> {
+        let (tx, rx) = channel();
+        let tray = Tray { tx, auto: autostart }.spawn().map_err(|e| format!("tray (StatusNotifier): {e}"))?;
+        let mut hotkey_label = String::new();
+        // Yalnız X11'de çalışır; Wayland'de sistem kısayoluna `YarinYaparim --panel` bağlanır.
+        let hk = GlobalHotKeyManager::new().map_err(|e| crate::log(&format!("kısayol yöneticisi: {e}"))).ok().and_then(|m| {
+            match m.register(HotKey::new(Some(Modifiers::CONTROL), Code::Space)) {
+                Ok(()) => { hotkey_label = "Ctrl+Space".into(); Some(m) }
+                Err(e) => { crate::log(&format!("Ctrl+Space alınamadı: {e}")); None }
+            }
+        });
+        Ok(Shell { _tray: tray, _hk: hk, rx, hotkey_label })
+    }
+
+    impl Shell {
+        pub fn poll(&self) -> Vec<Ev> {
+            let mut out: Vec<Ev> = self.rx.try_iter().collect();
+            while let Ok(e) = GlobalHotKeyEvent::receiver().try_recv() {
+                if e.state == HotKeyState::Pressed { out.push(Ev::Hotkey); }
+            }
+            out
+        }
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 mod imp {
     use super::Ev;
     pub struct Instance;
-    pub fn single_instance() -> Option<Instance> { Some(Instance) }
-    impl Instance { pub fn show_requested(&self) -> bool { false } }
+    pub fn single_instance(_cmd: &str) -> Option<Instance> { Some(Instance) }
+    impl Instance { pub fn poll(&self) -> Vec<Ev> { vec![] } }
     pub fn set_autostart(_on: bool) {}
     pub fn work_area() -> Option<(i32, i32, i32, i32)> { None }
     pub struct Shell { pub hotkey_label: String }
