@@ -3,6 +3,7 @@
 mod db;
 mod parse;
 mod platform;
+mod mcp;
 
 use chrono::{Datelike, Local, NaiveDate, NaiveTime, Timelike};
 use db::{Db, Task};
@@ -299,6 +300,10 @@ fn show_panel(ui: &AppWindow, panel: &TrayPanel) {
 }
 
 fn main() -> Result<(), slint::PlatformError> {
+    if std::env::args().any(|a| a == "--mcp") {
+        mcp::run(Db::open(&data_path()).expect("veritabanı açılamadı"));
+        return Ok(());
+    }
     let hidden = std::env::args().any(|a| a == "--hidden");
     std::panic::set_hook(Box::new(|info| log(&format!("PANİK: {info}"))));
     log(&format!("başladı (gizli: {hidden})"));

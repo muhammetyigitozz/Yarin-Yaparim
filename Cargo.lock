@@ -6363,6 +6363,7 @@ dependencies = [
  "ksni",
  "notify-rust",
  "rusqlite",
+ "serde_json",
  "slint",
  "slint-build",
  "tray-icon",

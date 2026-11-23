@@ -46,11 +46,9 @@ cargo build --release
 - [x] Tray, otomatik başlatma, tray paneli, kısayol
 - [x] Deadline bildirimleri
 - [x] Değiştirilebilir panel kısayolu
-- [ ] MCP sunucusu (Claude'un görev ekleyebilmesi için)
+- [x] MCP sunucusu (Claude'un görev ekleyebilmesi için)
 
-## MCP kurulumu (Claude'un görev ekleyebilmesi) — yakında
-> Bu bölüm 4. aşamada gelecek MCP sunucusu içindir; şu anki sürümde `--mcp` henüz yok.
-
+## MCP kurulumu (Claude'un görev ekleyebilmesi)
 Aynı exe `--mcp` bayrağıyla stdio MCP sunucusu olarak çalışır ve uygulamayla aynı veritabanını kullanır. Uygulama açıksa değişiklikler ~1 saniye içinde ekrana yansır.
 
 **Claude Desktop** — `claude_desktop_config.json` dosyasına ekle
@@ -73,6 +71,8 @@ claude mcp add yarin-yaparim -- "C:\Users\KULLANICI\Downloads\YarınYaparım\Yar
 ```
 
 **Araçlar**: `list_projects`, `add_project`, `list_tasks` (proje / tarih aralığı / yalnız açık), `add_task` (başlık, proje, deadline, öncelik, üst görev; Türkçe tarih ifadesi kabul eder: "cuma 14:00"), `update_task`, `complete_task`, `delete_task`.
+
+Görevler `id` ile anılır; Claude önce `list_tasks` ile id'leri görür.
 
 Örnek: *"Calculus ödevini Okul projesine cuma 14:00 deadline'la öncelikli ekle"* → Claude `add_task` çağırır, görev uygulamada belirir.
 

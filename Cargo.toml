@@ -11,6 +11,7 @@ path = "src/main.rs"
 slint = { version = "1.19", features = ["unstable-winit-030"] }
 rusqlite = { version = "0.43", features = ["bundled"] }
 chrono = "0.4"
+serde_json = "1"
 
 [dependencies.notify-rust]
 version = "4"
