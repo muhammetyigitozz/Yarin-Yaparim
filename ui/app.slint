@@ -1,0 +1,1058 @@
+import "fonts/Overpass-Regular.ttf";
+import "fonts/Overpass-Medium.ttf";
+import "fonts/Literata-Regular.ttf";
+import "fonts/Literata-Italic.ttf";
+
+export struct SubRow {
+    id: int,
+    title: string,
+    done: bool,
+}
+
+export struct TaskRow {
+    id: int,
+    title: string,
+    done: bool,
+    high: bool,
+    due-label: string,
+    due-state: int, // 0 yok, 1 normal, 2 yakın, 3 geçti
+    due-edit: string,
+    sub-total: int,
+    sub-done: int,
+    project-name: string,
+    project-color: color,
+    progress: float,
+    subtasks: [SubRow],
+}
+
+export struct PanelGroup {
+    name: string,
+    color: color,
+    items: [TaskRow],
+}
+
+export struct ProjectRow {
+    id: int,
+    name: string,
+    color: color,
+    color-idx: int,
+    open: int,
+}
+
+export global Pal {
+    out property <color> bg: #1E1F22;
+    out property <color> side: #18191B;
+    out property <color> panel: #232428;
+    out property <color> raised: #2C2D31;
+    out property <color> hover: #242529;
+    out property <color> line: #2B2C30;
+    out property <color> line-strong: #3E3F45;
+    out property <color> field: #18191B;
+    out property <color> text: #DDDDD9;
+    out property <color> text2: #A4A5AA;
+    out property <color> muted: #8A8B90;
+    out property <color> faint: #66676C;
+    out property <color> rose: #C98088;
+    out property <color> done-fill: #55565B;
+    out property <[color]> proj: [#C98088, #8FA88A, #7F9BB5, #C2A878, #A08FB8, #C48A6A, #8A8B90];
+}
+
+component Field inherits Rectangle {
+    in property <string> placeholder;
+    in-out property <string> text <=> ti.text;
+    in property <bool> error;
+    in property <length> fsize: 13px;
+    callback accepted(string);
+    callback edited(string);
+    callback focus-lost(string);
+    in property <bool> autofocus;
+    init => { if (root.autofocus) { ti.focus(); } }
+    public function focus-input() { ti.focus(); ti.select-all(); }
+    height: 32px;
+    border-radius: 6px;
+    background: Pal.field;
+    border-width: 1px;
+    border-color: root.error ? Pal.rose : (ti.has-focus ? Pal.line-strong : Pal.line);
+    Text {
+        x: 10px;
+        width: parent.width - 20px;
+        height: parent.height;
+        vertical-alignment: center;
+        text: root.placeholder;
+        color: Pal.faint;
+        font-size: root.fsize;
+        overflow: elide;
+        visible: ti.text == "";
+    }
+    ti := TextInput {
+        x: 10px;
+        width: parent.width - 20px;
+        height: parent.height;
+        vertical-alignment: center;
+        color: Pal.text;
+        font-size: root.fsize;
+        single-line: true;
+        selection-background-color: #45474E;
+        selection-foreground-color: Pal.text;
+        accepted => { root.accepted(self.text); }
+        edited => { root.edited(self.text); }
+        changed has-focus => { if (!self.has-focus) { root.focus-lost(self.text); } }
+    }
+}
+
+component Btn inherits Rectangle {
+    in property <string> label;
+    in property <bool> danger;
+    callback clicked();
+    height: 28px;
+    width: lbl.preferred-width + 22px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: root.danger ? Pal.rose : (ta.has-hover ? Pal.line-strong : Pal.line);
+    background: ta.pressed ? Pal.raised : transparent;
+    lbl := Text {
+        text: root.label;
+        color: root.danger ? Pal.rose : Pal.text2;
+        font-size: 12px;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component Check inherits Rectangle {
+    in property <bool> checked;
+    in property <bool> high;
+    callback toggled();
+    width: 16px;
+    height: 16px;
+    border-radius: 8px;
+    border-width: 1.5px;
+    border-color: root.checked ? Pal.done-fill : (root.high ? Pal.rose : (ta.has-hover ? Pal.text2 : Pal.muted));
+    background: root.checked ? Pal.done-fill : (ta.has-hover ? Pal.raised : transparent);
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        commands: "M 4.5 8.2 L 7 10.6 L 11.6 5.6";
+        stroke: Pal.bg;
+        stroke-width: 1.8px;
+        visible: root.checked;
+    }
+    ta := TouchArea {
+        x: -6px;
+        y: -6px;
+        width: parent.width + 12px;
+        height: parent.height + 12px;
+        mouse-cursor: pointer;
+        clicked => { root.toggled(); }
+    }
+}
+
+component StrikeText inherits Rectangle {
+    in property <string> text;
+    in property <bool> struck;
+    in property <color> tcolor;
+    in property <length> fsize: 14px;
+    tx := Text {
+        x: 0;
+        width: min(self.preferred-width, parent.width);
+        height: parent.height;
+        text: root.text;
+        color: root.tcolor;
+        font-size: root.fsize;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    Rectangle {
+        visible: root.struck;
+        x: 0;
+        width: tx.width;
+        y: parent.height / 2;
+        height: 1px;
+        background: Pal.faint;
+    }
+}
+
+component TaskItem inherits VerticalLayout {
+    in property <TaskRow> t;
+    in property <bool> expanded;
+    in property <bool> can-drag;
+    in property <bool> show-project;
+    out property <bool> dragging: root.dy != 0;
+    property <length> dy: 0;
+    property <bool> due-error: false;
+    property <bool> confirm-del: false;
+    callback toggle-expand();
+    callback toggle(int);
+    callback dropped(int, int);
+    callback rename(int, string);
+    callback set-due(int, string) -> bool;
+    callback toggle-high(int);
+    callback delete(int);
+    callback add-sub(int, string);
+    callback delete-sub(int);
+
+    Rectangle {
+        height: 40px;
+        ta := TouchArea {
+            mouse-cursor: root.dy != 0 ? MouseCursor.grabbing : MouseCursor.default;
+            moved => {
+                if (root.can-drag && !root.expanded && !root.t.done) {
+                    root.dy = self.mouse-y - self.pressed-y;
+                }
+            }
+            pointer-event(e) => {
+                if (e.kind == PointerEventKind.up && e.button == PointerEventButton.left) {
+                    if (root.dy > 6px || root.dy < -6px) {
+                        root.dropped(root.t.id, round(root.dy / 40px));
+                    } else {
+                        root.confirm-del = false;
+                        root.toggle-expand();
+                    }
+                    root.dy = 0;
+                }
+            }
+        }
+        Rectangle {
+            y: root.dy;
+            border-radius: 6px;
+            background: root.dy != 0 ? Pal.raised : (root.expanded ? Pal.panel : (ta.has-hover ? Pal.hover : transparent));
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 12px;
+                spacing: 12px;
+                Rectangle {
+                    width: 16px;
+                    Check {
+                        y: (parent.height - self.height) / 2;
+                        checked: root.t.done;
+                        high: root.t.high;
+                        toggled => { root.toggle(root.t.id); }
+                    }
+                }
+                StrikeText {
+                    horizontal-stretch: 1;
+                    text: root.t.title;
+                    struck: root.t.done;
+                    tcolor: root.t.done ? Pal.faint : Pal.text;
+                }
+                if root.show-project: Text {
+                    text: root.t.project-name;
+                    color: root.t.project-color;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+                if root.t.sub-total > 0: Text {
+                    text: root.t.sub-done + "/" + root.t.sub-total;
+                    color: Pal.faint;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+                if root.t.due-label != "": Text {
+                    text: root.t.due-label;
+                    font-family: "Literata";
+                    font-italic: true;
+                    font-size: 13px;
+                    color: root.t.done ? Pal.faint : (root.t.due-state == 3 ? Pal.rose : (root.t.due-state == 2 ? Pal.text : Pal.muted));
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+
+    if root.expanded: Rectangle {
+        background: Pal.panel;
+        border-radius: 6px;
+        VerticalLayout {
+            padding: 12px;
+            padding-left: 38px;
+            padding-top: 4px;
+            spacing: 8px;
+            HorizontalLayout {
+                spacing: 8px;
+                Field {
+                    horizontal-stretch: 3;
+                    text: root.t.title;
+                    accepted(s) => { root.rename(root.t.id, s); }
+                    focus-lost(s) => { if (s != root.t.title) { root.rename(root.t.id, s); } }
+                }
+                Field {
+                    horizontal-stretch: 2;
+                    text: root.t.due-edit;
+                    placeholder: "Tarih yok — cuma, 2 Ara, 14:00";
+                    error: root.due-error;
+                    accepted(s) => { root.due-error = !root.set-due(root.t.id, s); }
+                    edited => { root.due-error = false; }
+                    focus-lost(s) => { if (s != root.t.due-edit) { root.due-error = !root.set-due(root.t.id, s); } }
+                }
+            }
+            for s in root.t.subtasks: HorizontalLayout {
+                height: 28px;
+                spacing: 10px;
+                Rectangle {
+                    width: 16px;
+                    Check {
+                        y: (parent.height - self.height) / 2;
+                        checked: s.done;
+                        toggled => { root.toggle(s.id); }
+                    }
+                }
+                StrikeText {
+                    horizontal-stretch: 1;
+                    text: s.title;
+                    struck: s.done;
+                    fsize: 13px;
+                    tcolor: s.done ? Pal.faint : Pal.text2;
+                }
+                Rectangle {
+                    width: 20px;
+                    sx := TouchArea { mouse-cursor: pointer; clicked => { root.delete-sub(s.id); } }
+                    Path {
+                        width: 10px;
+                        height: 10px;
+                        viewbox-width: 10;
+                        viewbox-height: 10;
+                        commands: "M 1 1 L 9 9 M 9 1 L 1 9";
+                        stroke: sx.has-hover ? Pal.rose : Pal.faint;
+                        stroke-width: 1.3px;
+                    }
+                }
+            }
+            Field {
+                placeholder: "Alt görev ekle";
+                accepted(s) => {
+                    if (s != "") {
+                        root.add-sub(root.t.id, s);
+                        self.text = "";
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                Btn {
+                    label: root.t.high ? "Önceliği kaldır" : "Öncelikli yap";
+                    clicked => { root.toggle-high(root.t.id); }
+                }
+                Btn {
+                    label: root.confirm-del ? "Silmek için tekrar bas" : "Sil";
+                    danger: root.confirm-del;
+                    clicked => {
+                        if (root.confirm-del) { root.delete(root.t.id); } else { root.confirm-del = true; }
+                    }
+                }
+                Text {
+                    text: root.due-error ? "Tarih anlaşılamadı" : "";
+                    color: Pal.rose;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+    Rectangle {
+        height: 1px;
+        background: root.expanded ? transparent : Pal.line;
+    }
+}
+
+component NavItem inherits Rectangle {
+    in property <string> label;
+    in property <string> count;
+    in property <bool> active;
+    in property <color> dot: transparent;
+    in property <bool> can-drag;
+    out property <bool> dragging: root.dy != 0;
+    property <length> dy: 0;
+    callback clicked();
+    callback edit();
+    callback dropped(int);
+    height: 32px;
+    ta := TouchArea {
+        mouse-cursor: root.dy != 0 ? MouseCursor.grabbing : MouseCursor.pointer;
+        moved => { if (root.can-drag) { root.dy = self.mouse-y - self.pressed-y; } }
+        double-clicked => { root.edit(); }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.up && e.button == PointerEventButton.right) { root.edit(); }
+            if (e.kind == PointerEventKind.up && e.button == PointerEventButton.left) {
+                if (root.dy > 6px || root.dy < -6px) { root.dropped(round(root.dy / 32px)); } else { root.clicked(); }
+                root.dy = 0;
+            }
+        }
+    }
+    Rectangle {
+        y: root.dy;
+        border-radius: 6px;
+        background: root.dy != 0 ? Pal.raised : (root.active ? #2A2B2F : (ta.has-hover ? #1F2023 : transparent));
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 10px;
+            spacing: 10px;
+            Rectangle {
+                width: 7px;
+                Rectangle {
+                    y: (parent.height - 7px) / 2;
+                    width: 7px;
+                    height: 7px;
+                    border-radius: 3.5px;
+                    background: root.dot;
+                }
+            }
+            Text {
+                horizontal-stretch: 1;
+                text: root.label;
+                color: root.active ? Pal.text : Pal.text2;
+                font-size: 13px;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Text {
+                text: root.count;
+                color: root.active ? root.dot : Pal.faint;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "Yarın Yaparım";
+    icon: @image-url("icon.png");
+    preferred-width: 980px;
+    preferred-height: 640px;
+    min-width: 640px;
+    min-height: 420px;
+    background: Pal.bg;
+    default-font-family: "Overpass";
+
+    in property <[ProjectRow]> projects;
+    in property <[TaskRow]> tasks;
+    in property <[TaskRow]> done-tasks;
+    in property <int> view-kind: 0; // 0 yakında, 1 proje
+    in property <int> view-project: -1;
+    in property <string> view-title: "Yakında";
+    in property <string> view-summary;
+    in property <string> soon-count;
+    in property <int> done-count;
+    in-out property <bool> show-done: false;
+    in-out property <int> expanded-id: -1;
+    in-out property <string> quick-msg;
+
+    property <bool> pe-open: false;
+    property <int> pe-id: -1;
+    property <string> pe-name;
+    property <int> pe-color: 0;
+    property <bool> pe-confirm: false;
+
+    callback select-view(int, int);
+    callback add-task(string) -> bool;
+    callback add-sub(int, string);
+    callback toggle-task(int);
+    callback delete-task(int);
+    callback rename-task(int, string);
+    callback set-due(int, string) -> bool;
+    callback toggle-high(int);
+    callback move-task(int, int);
+    callback move-project(int, int);
+    callback save-project(int, string, int);
+    callback delete-project(int);
+    callback show-done-changed();
+
+    public function focus-quick() { quick.focus-input(); }
+
+    function open-editor(id: int, name: string, c: int) {
+        root.pe-id = id;
+        root.pe-name = name;
+        root.pe-color = c;
+        root.pe-confirm = false;
+        root.pe-open = true;
+    }
+
+    HorizontalLayout {
+        // Kenar çubuğu
+        Rectangle {
+            width: 220px;
+            background: Pal.side;
+            VerticalLayout {
+                padding: 14px;
+                padding-top: 20px;
+                spacing: 2px;
+                HorizontalLayout {
+                    padding-left: 10px;
+                    Text {
+                        text: "Yarın Yaparım";
+                        font-family: "Literata";
+                        font-size: 19px;
+                        color: Pal.text;
+                    }
+                }
+                Rectangle { height: 18px; }
+                NavItem {
+                    label: "Yakında";
+                    count: root.soon-count;
+                    active: root.view-kind == 0;
+                    dot: Pal.text2;
+                    clicked => { root.expanded-id = -1; root.select-view(0, -1); }
+                }
+                Rectangle { height: 16px; }
+                HorizontalLayout {
+                    padding-left: 10px;
+                    height: 22px;
+                    Text {
+                        text: "Projeler";
+                        color: Pal.faint;
+                        font-size: 12px;
+                    }
+                }
+                for p in root.projects: NavItem {
+                    z: self.dragging ? 10 : 0;
+                    label: p.name;
+                    count: p.open > 0 ? p.open : "";
+                    dot: p.color;
+                    can-drag: true;
+                    active: root.view-kind == 1 && root.view-project == p.id;
+                    clicked => { root.expanded-id = -1; root.select-view(1, p.id); }
+                    edit => { root.open-editor(p.id, p.name, p.color-idx); }
+                    dropped(n) => { root.move-project(p.id, n); }
+                }
+                Rectangle {
+                    height: 32px;
+                    nta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.open-editor(-1, "", Math.mod(root.projects.length, 7)); }
+                    }
+                    Text {
+                        x: 10px;
+                        height: parent.height;
+                        vertical-alignment: center;
+                        text: "+ Yeni proje";
+                        color: nta.has-hover ? Pal.text2 : Pal.faint;
+                        font-size: 13px;
+                    }
+                }
+                Rectangle { vertical-stretch: 1; }
+                if root.pe-open: Rectangle {
+                    background: Pal.panel;
+                    border-radius: 8px;
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 10px;
+                        Text {
+                            text: root.pe-id < 0 ? "Yeni proje" : "Projeyi düzenle";
+                            color: Pal.text2;
+                            font-size: 12px;
+                        }
+                        pe-field := Field {
+                            autofocus: true;
+                            text: root.pe-name;
+                            placeholder: "Proje adı";
+                            edited(s) => { root.pe-name = s; }
+                            accepted(s) => {
+                                if (s != "") { root.save-project(root.pe-id, s, root.pe-color); root.pe-open = false; }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            alignment: start;
+                            for c[i] in Pal.proj: Rectangle {
+                                width: 20px;
+                                height: 20px;
+                                border-radius: 10px;
+                                border-width: root.pe-color == i ? 2px : 0px;
+                                border-color: Pal.text;
+                                Rectangle {
+                                    width: 12px;
+                                    height: 12px;
+                                    border-radius: 6px;
+                                    background: c;
+                                }
+                                TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.pe-color = i; }
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            alignment: start;
+                            Btn {
+                                label: "Kaydet";
+                                clicked => {
+                                    if (root.pe-name != "") { root.save-project(root.pe-id, root.pe-name, root.pe-color); root.pe-open = false; }
+                                }
+                            }
+                            Btn {
+                                label: "Vazgeç";
+                                clicked => { root.pe-open = false; }
+                            }
+                        }
+                        if root.pe-id >= 0: Btn {
+                            label: root.pe-confirm ? "Görevleriyle silinsin mi? Tekrar bas" : "Projeyi sil";
+                            danger: root.pe-confirm;
+                            clicked => {
+                                if (root.pe-confirm) { root.delete-project(root.pe-id); root.pe-open = false; } else { root.pe-confirm = true; }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Ana alan
+        VerticalLayout {
+            padding: 26px;
+            padding-top: 20px;
+            padding-bottom: 12px;
+            spacing: 12px;
+            HorizontalLayout {
+                spacing: 12px;
+                Text {
+                    text: root.view-title;
+                    font-family: "Literata";
+                    font-size: 26px;
+                    color: Pal.text;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+                Text {
+                    text: root.view-summary;
+                    color: Pal.muted;
+                    font-size: 13px;
+                    vertical-alignment: bottom;
+                }
+            }
+            quick := Field {
+                height: 38px;
+                fsize: 14px;
+                placeholder: root.view-kind == 0
+                    ? "Yeni görev — #proje cuma 14:00, ! öncelikli"
+                    : "Yeni görev yaz — cuma, 2 Ara, 14:00, ! öncelikli";
+                error: root.quick-msg != "";
+                edited => { root.quick-msg = ""; }
+                accepted(s) => {
+                    if (s != "") {
+                        if (root.add-task(s)) { self.text = ""; }
+                    }
+                }
+            }
+            if root.quick-msg != "": Text {
+                text: root.quick-msg;
+                color: Pal.rose;
+                font-size: 12px;
+            }
+            Rectangle {
+                vertical-stretch: 1;
+                clip: true;
+                TouchArea {
+                    scroll-event(e) => {
+                        fl.content-y = clamp(fl.content-y + e.delta-y, min(0px, fl.height - fl.content-height), 0px);
+                        accept
+                    }
+                    fl := Flickable {
+                        interactive: false;
+                        content-width: self.width;
+                        content-height: max(self.height, col.preferred-height);
+                        col := VerticalLayout {
+                            width: fl.width;
+                            alignment: start;
+                            for t in root.tasks: TaskItem {
+                                z: self.dragging ? 10 : 0;
+                                t: t;
+                                expanded: root.expanded-id == t.id;
+                                can-drag: root.view-kind == 1;
+                                show-project: root.view-kind == 0;
+                                toggle-expand => { root.expanded-id = root.expanded-id == t.id ? -1 : t.id; }
+                                toggle(id) => { root.toggle-task(id); }
+                                dropped(id, n) => { root.move-task(id, n); }
+                                rename(id, s) => { root.rename-task(id, s); }
+                                set-due(id, s) => { return root.set-due(id, s); }
+                                toggle-high(id) => { root.toggle-high(id); }
+                                delete(id) => { root.expanded-id = -1; root.delete-task(id); }
+                                add-sub(id, s) => { root.add-sub(id, s); }
+                                delete-sub(id) => { root.delete-task(id); }
+                            }
+                            if root.tasks.length == 0: Text {
+                                height: 80px;
+                                vertical-alignment: center;
+                                color: Pal.faint;
+                                font-size: 13px;
+                                text: root.projects.length == 0
+                                    ? "Soldan “+ Yeni proje” ile başla."
+                                    : (root.view-kind == 0 ? "Önümüzdeki günlerde tarihli iş yok." : "Açık görev yok. Yukarıya yazıp Enter'a bas.");
+                            }
+                            if root.view-kind == 1 && root.done-count > 0: Rectangle {
+                                height: 40px;
+                                dta := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.show-done = !root.show-done; root.show-done-changed(); }
+                                }
+                                Text {
+                                    x: 10px;
+                                    height: parent.height;
+                                    vertical-alignment: center;
+                                    text: (root.show-done ? "Tamamlananları gizle" : "Tamamlananları göster") + " (" + root.done-count + ")";
+                                    color: dta.has-hover ? Pal.text2 : Pal.faint;
+                                    font-size: 12px;
+                                }
+                            }
+                            for t in root.done-tasks: TaskItem {
+                                t: t;
+                                expanded: root.expanded-id == t.id;
+                                toggle-expand => { root.expanded-id = root.expanded-id == t.id ? -1 : t.id; }
+                                toggle(id) => { root.toggle-task(id); }
+                                rename(id, s) => { root.rename-task(id, s); }
+                                set-due(id, s) => { return root.set-due(id, s); }
+                                toggle-high(id) => { root.toggle-high(id); }
+                                delete(id) => { root.expanded-id = -1; root.delete-task(id); }
+                                add-sub(id, s) => { root.add-sub(id, s); }
+                                delete-sub(id) => { root.delete-task(id); }
+                            }
+                        }
+                    }
+                }
+                // ince kaydırma göstergesi
+                if fl.content-height > fl.height + 1px: Rectangle {
+                    x: parent.width - 4px;
+                    width: 3px;
+                    border-radius: 1.5px;
+                    background: Pal.line-strong;
+                    height: max(24px, parent.height * fl.height / fl.content-height);
+                    y: (parent.height - self.height) * (-fl.content-y) / max(1px, fl.content-height - fl.height);
+                }
+            }
+        }
+    }
+}
+
+component PanelItem inherits Rectangle {
+    in property <TaskRow> t;
+    in property <color> tint;
+    callback toggle(int);
+    callback open(int);
+    height: 40px;
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.open(root.t.id); }
+    }
+    Rectangle {
+        border-radius: 5px;
+        background: ta.has-hover ? #1F2023 : transparent;
+    }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        padding-bottom: 6px;
+        spacing: 10px;
+        Rectangle {
+            width: 16px;
+            Check {
+                y: (parent.height - self.height) / 2;
+                checked: root.t.done;
+                high: root.t.high;
+                toggled => { root.toggle(root.t.id); }
+            }
+        }
+        StrikeText {
+            horizontal-stretch: 1;
+            text: root.t.title;
+            struck: root.t.done;
+            fsize: 13px;
+            tcolor: root.t.done ? Pal.faint : Pal.text;
+        }
+        Text {
+            text: root.t.due-label;
+            font-family: "Literata";
+            font-italic: true;
+            font-size: 12px;
+            color: root.t.due-state == 3 ? Pal.rose : (root.t.due-state == 2 ? Pal.text : Pal.muted);
+            vertical-alignment: center;
+        }
+    }
+    // kalan süre çizgisi: dolu = yaklaştı
+    Rectangle {
+        x: 34px;
+        y: parent.height - 5px;
+        width: parent.width - 42px;
+        height: 2px;
+        border-radius: 1px;
+        background: Pal.line;
+        Rectangle {
+            x: 0;
+            width: parent.width * root.t.progress;
+            height: 2px;
+            border-radius: 1px;
+            background: root.t.due-state >= 2 ? Pal.rose : Pal.muted;
+        }
+    }
+}
+
+export component TrayPanel inherits Window {
+    title: "Yarın Yaparım";
+    icon: @image-url("icon.png");
+    no-frame: true;
+    always-on-top: true;
+    width: 360px;
+    height: 480px;
+    background: #161719;
+    default-font-family: "Overpass";
+
+    in property <[PanelGroup]> groups;
+    in property <string> summary;
+    in property <string> hotkey-label;
+    in property <string> placeholder: "Yeni görev — cuma 14:00, ! öncelikli";
+    in property <[ProjectRow]> projects;
+    in property <int> target-id: -1;
+    in property <string> target-name;
+    in property <color> target-color: Pal.faint;
+    in-out property <string> quick-msg;
+    callback pick-project(int);
+    property <bool> pop-open: false;
+    callback toggle-task(int);
+    callback open-task(int);
+    callback add-task(string) -> bool;
+    callback open-main();
+    public function focus-quick() { quick.focus-input(); }
+
+    Rectangle {
+        border-width: 1px;
+        border-color: Pal.line-strong;
+    }
+    VerticalLayout {
+        padding: 16px;
+        padding-bottom: 10px;
+        spacing: 10px;
+        HorizontalLayout {
+            Text {
+                text: "Bugün ve yakın";
+                font-family: "Literata";
+                font-size: 17px;
+                color: Pal.text;
+                horizontal-stretch: 1;
+            }
+            Text {
+                text: root.hotkey-label;
+                color: Pal.faint;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            height: 34px;
+            sel := Rectangle {
+                width: min(150px, sel-row.preferred-width);
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: sta.has-hover || root.pop-open ? Pal.line-strong : Pal.line;
+                background: Pal.field;
+                sta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.pop-open = !root.pop-open; }
+                }
+                sel-row := HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    spacing: 7px;
+                    Rectangle {
+                        width: 7px;
+                        Rectangle {
+                            y: (parent.height - 7px) / 2;
+                            width: 7px;
+                            height: 7px;
+                            border-radius: 3.5px;
+                            background: root.target-color;
+                        }
+                    }
+                    Text {
+                        text: root.target-name == "" ? "Proje seç" : root.target-name;
+                        color: Pal.text2;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    Path {
+                        y: (parent.height - 6px) / 2;
+                        width: 9px;
+                        height: 6px;
+                        viewbox-width: 9;
+                        viewbox-height: 6;
+                        commands: "M 1 1 L 4.5 4.5 L 8 1";
+                        stroke: Pal.muted;
+                        stroke-width: 1.3px;
+                    }
+                }
+            }
+        quick := Field {
+            horizontal-stretch: 1;
+            placeholder: root.placeholder;
+            error: root.quick-msg != "";
+            edited => { root.quick-msg = ""; }
+            accepted(s) => {
+                if (s != "") {
+                    if (root.add-task(s)) { self.text = ""; }
+                }
+            }
+        }
+        }
+        if root.quick-msg != "": Text {
+            text: root.quick-msg;
+            color: Pal.rose;
+            font-size: 12px;
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            clip: true;
+            TouchArea {
+                scroll-event(e) => {
+                    pf.content-y = clamp(pf.content-y + e.delta-y, min(0px, pf.height - pf.content-height), 0px);
+                    accept
+                }
+                pf := Flickable {
+                    interactive: false;
+                    content-width: self.width;
+                    content-height: max(self.height, pc.preferred-height);
+                    pc := VerticalLayout {
+                        width: pf.width;
+                        alignment: start;
+                        spacing: 14px;
+                        for g in root.groups: HorizontalLayout {
+                            spacing: 8px;
+                            Rectangle {
+                                width: 2px;
+                                background: g.color;
+                            }
+                            VerticalLayout {
+                                Text {
+                                    text: g.name;
+                                    color: g.color;
+                                    font-size: 12px;
+                                    height: 20px;
+                                    vertical-alignment: center;
+                                }
+                                for t in g.items: PanelItem {
+                                    t: t;
+                                    tint: g.color;
+                                    toggle(id) => { root.toggle-task(id); }
+                                    open(id) => { root.open-task(id); }
+                                }
+                            }
+                        }
+                        if root.groups.length == 0: Text {
+                            height: 60px;
+                            vertical-alignment: center;
+                            text: "Önümüzdeki 7 günde tarihli iş yok.";
+                            color: Pal.faint;
+                            font-size: 13px;
+                        }
+                    }
+                }
+            }
+        }
+        HorizontalLayout {
+            height: 24px;
+            Rectangle {
+                horizontal-stretch: 1;
+                ota := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.open-main(); }
+                }
+                Text {
+                    x: 0;
+                    height: parent.height;
+                    vertical-alignment: center;
+                    text: "Ana pencereyi aç";
+                    color: ota.has-hover ? Pal.text : Pal.text2;
+                    font-size: 12px;
+                }
+            }
+            Text {
+                text: root.summary;
+                color: Pal.faint;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+        }
+    }
+
+    if root.pop-open: TouchArea {
+        clicked => { root.pop-open = false; }
+    }
+    if root.pop-open: Rectangle {
+        x: sel.absolute-position.x - root.absolute-position.x;
+        y: sel.absolute-position.y - root.absolute-position.y + sel.height + 4px;
+        width: 210px;
+        height: pop-col.preferred-height;
+        TouchArea { }
+                    Rectangle {
+                        background: Pal.panel;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: Pal.line-strong;
+                    }
+                    pop-col := VerticalLayout {
+                        padding: 4px;
+                        for p in root.projects: Rectangle {
+                            height: 30px;
+                            pta := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.pick-project(p.id);
+                                    root.pop-open = false;
+                                    quick.focus-input();
+                                }
+                            }
+                            Rectangle {
+                                border-radius: 5px;
+                                background: pta.has-hover ? Pal.raised : transparent;
+                            }
+                            HorizontalLayout {
+                                padding-left: 10px;
+                                padding-right: 10px;
+                                spacing: 9px;
+                                Rectangle {
+                                    width: 7px;
+                                    Rectangle {
+                                        y: (parent.height - 7px) / 2;
+                                        width: 7px;
+                                        height: 7px;
+                                        border-radius: 3.5px;
+                                        background: p.color;
+                                    }
+                                }
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: p.name;
+                                    color: p.id == root.target-id ? Pal.text : Pal.text2;
+                                    font-size: 13px;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                if p.id == root.target-id: Path {
+                                    y: (parent.height - 8px) / 2;
+                                    width: 10px;
+                                    height: 8px;
+                                    viewbox-width: 10;
+                                    viewbox-height: 8;
+                                    commands: "M 1 4 L 4 7 L 9 1";
+                                    stroke: Pal.text2;
+                                    stroke-width: 1.4px;
+                                }
+                            }
+                        }
+                        if root.projects.length == 0: Text {
+                            height: 30px;
+                            x: 10px;
+                            vertical-alignment: center;
+                            text: "Önce ana pencereden proje oluştur";
+                            color: Pal.faint;
+                            font-size: 12px;
+                        }
+                    }
+                    }
+}

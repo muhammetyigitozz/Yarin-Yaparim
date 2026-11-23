@@ -1,0 +1,6 @@
+/target
+*.exe
+*.log
+*.db
+*.db-wal
+*.db-shm
