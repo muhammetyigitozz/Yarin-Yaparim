@@ -5,7 +5,7 @@ Projeler için hafif, koyu temalı bir masaüstü yapılacaklar listesi. Rust + 
 ## Özellikler
 - Projeler (renkli), görevler, alt görevler, öncelik, sürükle-bırak sıralama
 - Deadline'lı veya deadline'sız görev; Türkçe hızlı giriş:
-  `FLIR testi cuma 14:00 ! #Stim` → başlık, tarih, saat, öncelik, proje
+  `Calculus Ödevi cuma 14:00 ! #Okul` → başlık, tarih, saat, öncelik, proje
   (bugün, yarın, öbür gün, haftaya, pzt…paz, `2 Ara`, `25.11`, `+3`, `3 gün sonra`, `14:00`)
 - "Yakında" görünümü: tüm projelerdeki tarihli işler
 - Kapat (X) → tray'e gizlenir; tray sağ tık → Ana pencere / Windows ile başlat / Çık
