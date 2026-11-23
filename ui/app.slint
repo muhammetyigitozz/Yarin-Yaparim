@@ -443,6 +443,10 @@ export component AppWindow inherits Window {
     in-out property <bool> show-done: false;
     in-out property <int> expanded-id: -1;
     in-out property <string> quick-msg;
+    in property <string> hotkey-label;
+    in-out property <string> hotkey-msg;
+    property <bool> hk-edit: false;
+    callback set-hotkey(string) -> bool;
 
     property <bool> pe-open: false;
     property <int> pe-id: -1;
@@ -537,6 +541,38 @@ export component AppWindow inherits Window {
                     }
                 }
                 Rectangle { vertical-stretch: 1; }
+                if !root.hk-edit: Rectangle {
+                    height: 28px;
+                    hta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.hotkey-msg = ""; root.hk-edit = true; }
+                    }
+                    Text {
+                        x: 10px;
+                        height: parent.height;
+                        vertical-alignment: center;
+                        text: "Panel kısayolu: " + (root.hotkey-label == "" ? "yok" : root.hotkey-label);
+                        color: hta.has-hover ? Pal.text2 : Pal.faint;
+                        font-size: 12px;
+                    }
+                }
+                if root.hk-edit: VerticalLayout {
+                    spacing: 4px;
+                    Field {
+                        autofocus: true;
+                        text: root.hotkey-label;
+                        placeholder: "Ctrl+Shift+T, Alt+Space…";
+                        error: root.hotkey-msg != "";
+                        accepted(s) => { if (root.set-hotkey(s)) { root.hk-edit = false; } }
+                        focus-lost => { if (root.hotkey-msg == "") { root.hk-edit = false; } }
+                    }
+                    Text {
+                        text: root.hotkey-msg != "" ? root.hotkey-msg : "Enter ile kaydet";
+                        color: root.hotkey-msg != "" ? Pal.rose : Pal.faint;
+                        font-size: 11px;
+                        wrap: word-wrap;
+                    }
+                }
                 if root.pe-open: Rectangle {
                     background: Pal.panel;
                     border-radius: 8px;

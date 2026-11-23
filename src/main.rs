@@ -230,6 +230,37 @@ fn data_path() -> std::path::PathBuf {
     dir.join("veri.db")
 }
 
+/// Deadline bildirimleri: 24 saat kala ve zamanı gelince (tarih-only → 09:00).
+fn check_notifications(app: &App) {
+    let now = Local::now().naive_local();
+    let names = app.names.borrow().clone();
+    for (t, bits) in app.db.notify_candidates() {
+        let due = t.due_date.unwrap().and_time(t.due_time.unwrap_or(NaiveTime::from_hms_opt(9, 0, 0).unwrap()));
+        let left = due - now;
+        let proj = names.iter().find(|p| p.0 == t.project_id).map(|p| p.1.clone()).unwrap_or_default();
+        let mut nb = bits;
+        let mut msg = None;
+        if left <= chrono::Duration::zero() {
+            nb = 3;
+            if left > chrono::Duration::hours(-12) { msg = Some(format!("Zamanı geldi · {proj}")); }
+        } else if left <= chrono::Duration::hours(24) && bits & 1 == 0 {
+            nb |= 1;
+            let when = t.due_time.map(|x| x.format(" %H:%M").to_string()).unwrap_or_default();
+            let day = if due.date() == now.date() { "Bugün" } else { "Yarın" };
+            msg = Some(format!("{day}{when} · {proj}"));
+        }
+        if nb != bits { app.db.set_notified(t.id, nb); }
+        if let Some(body) = msg {
+            let title = t.title.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = notify_rust::Notification::new().appname("Yarın Yaparım").summary(&title).body(&body).show() {
+                    log(&format!("bildirim gösterilemedi: {e}"));
+                }
+            });
+        }
+    }
+}
+
 fn show_main(ui: &AppWindow) {
     let _ = ui.show();
     ui.window().with_winit_window(|w| {
@@ -424,15 +455,34 @@ fn main() -> Result<(), slint::PlatformError> {
     // Tray olay döngüsü başladıktan sonra kurulur
     let shell: Rc<RefCell<Option<platform::Shell>>> = Rc::new(RefCell::new(None));
     {
-        let (shell, p) = (shell.clone(), panel.as_weak());
+        let (shell, p, uw) = (shell.clone(), panel.as_weak(), ui.as_weak());
+        let hk_setting = app.db.setting("hotkey");
         slint::Timer::single_shot(std::time::Duration::from_millis(0), move || {
-            match platform::shell(autostart) {
+            match platform::shell(autostart, hk_setting) {
                 Ok(s) => {
                     log(&format!("tray hazır, kısayol: {}", if s.hotkey_label.is_empty() { "yok" } else { &s.hotkey_label }));
                     if let Some(p) = p.upgrade() { p.set_hotkey_label(s.hotkey_label.clone().into()); }
+                    if let Some(u) = uw.upgrade() { u.set_hotkey_label(s.hotkey_label.clone().into()); }
                     *shell.borrow_mut() = Some(s);
                 }
                 Err(e) => log(&format!("tray kurulamadı: {e}")),
+            }
+        });
+    }
+    {
+        let (shell, a, w) = (shell.clone(), app.clone(), ui.as_weak());
+        ui.on_set_hotkey(move |spec| {
+            let u = w.unwrap();
+            let r = match shell.borrow_mut().as_mut() { Some(s) => s.set_hotkey(&spec), None => Err("tray yok".into()) };
+            match r {
+                Ok(()) => {
+                    a.db.set_setting("hotkey", spec.trim());
+                    u.set_hotkey_label(spec.trim().into());
+                    a.panel.set_hotkey_label(spec.trim().into());
+                    u.set_hotkey_msg("".into());
+                    true
+                }
+                Err(e) => { u.set_hotkey_msg(format!("Kısayol {e}").into()); false }
             }
         });
     }
@@ -478,6 +528,7 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             let t = tick.get().wrapping_add(1);
             tick.set(t);
+            if t % 250 == 1 { check_notifications(&app); }
             if t % 12 == 0 {
                 let v = app.db.data_version();
                 let m = Local::now().minute();

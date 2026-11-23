@@ -9,10 +9,34 @@ pub enum Ev {
     Quit,
 }
 
+
+/// "Ctrl+Shift+T" gibi metni global-hotkey biçimine çevirip kaydeder.
+#[cfg(any(windows, target_os = "linux"))]
+pub fn register_hotkey(m: &global_hotkey::GlobalHotKeyManager, old: Option<global_hotkey::hotkey::HotKey>, spec: &str)
+    -> Result<global_hotkey::hotkey::HotKey, String> {
+    use std::str::FromStr;
+    let parts: Vec<String> = spec.split('+').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect();
+    if parts.is_empty() { return Err("boş".into()); }
+    let mut norm: Vec<String> = parts[..parts.len() - 1].iter().map(|m| match m.to_lowercase().as_str() {
+        "ctrl" | "control" => "control".into(), "win" | "super" | "meta" => "super".into(), o => o.to_string(),
+    }).collect();
+    let k = &parts[parts.len() - 1];
+    let key = if k.len() == 1 && k.chars().all(|c| c.is_ascii_alphabetic()) { format!("Key{}", k.to_uppercase()) }
+        else if k.len() == 1 && k.chars().all(|c| c.is_ascii_digit()) { format!("Digit{k}") }
+        else { let mut c = k.chars(); c.next().map(|f| f.to_uppercase().collect::<String>() + &c.as_str().to_lowercase()).unwrap_or_default() };
+    norm.push(key);
+    let hk = global_hotkey::hotkey::HotKey::from_str(&norm.join("+")).map_err(|e| format!("anlaşılmadı: {e}"))?;
+    if let Some(o) = old { let _ = m.unregister(o); }
+    match m.register(hk) {
+        Ok(()) => Ok(hk),
+        Err(e) => { if let Some(o) = old { let _ = m.register(o); } Err(format!("alınamadı: {e}")) }
+    }
+}
+
 #[cfg(windows)]
 mod imp {
     use super::Ev;
-    use global_hotkey::{hotkey::{Code, HotKey, Modifiers}, GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
+    use global_hotkey::{hotkey::HotKey, GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
     use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
     use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HANDLE, RECT, WAIT_OBJECT_0};
@@ -69,14 +93,15 @@ mod imp {
 
     pub struct Shell {
         _tray: TrayIcon,
-        _hk: Option<GlobalHotKeyManager>,
+        hk: Option<GlobalHotKeyManager>,
+        cur: Option<HotKey>,
         open_id: tray_icon::menu::MenuId,
         auto: CheckMenuItem,
         quit_id: tray_icon::menu::MenuId,
         pub hotkey_label: String,
     }
 
-    pub fn shell(autostart: bool) -> Result<Shell, String> {
+    pub fn shell(autostart: bool, hotkey: Option<String>) -> Result<Shell, String> {
         let rgba = include_bytes!("../ui/tray32.rgba").to_vec();
         let icon = Icon::from_rgba(rgba, 32, 32).map_err(|e| format!("ikon: {e}"))?;
         let menu = Menu::new();
@@ -91,24 +116,29 @@ mod imp {
             .with_menu_on_left_click(false)
             .build()
             .map_err(|e| format!("tray: {e}"))?;
-        let mut hotkey_label = String::new();
-        let hk = GlobalHotKeyManager::new().map_err(|e| crate::log(&format!("kısayol yöneticisi: {e}"))).ok().and_then(|m| {
-            for (mods, label) in [
-                (Modifiers::CONTROL, "Ctrl+Space"),
-                (Modifiers::CONTROL | Modifiers::SHIFT, "Ctrl+Shift+Space"),
-                (Modifiers::CONTROL | Modifiers::ALT, "Ctrl+Alt+Space"),
-            ] {
-                match m.register(HotKey::new(Some(mods), Code::Space)) {
-                    Ok(()) => { hotkey_label = label.to_string(); return Some(m); }
-                    Err(e) => crate::log(&format!("{label} alınamadı: {e}")),
+        let hk = GlobalHotKeyManager::new().map_err(|e| crate::log(&format!("kısayol yöneticisi: {e}"))).ok();
+        let (mut cur, mut hotkey_label) = (None, String::new());
+        if let Some(m) = &hk {
+            let tries: Vec<String> = match hotkey { Some(h) => vec![h], None => vec!["Ctrl+Space".into(), "Ctrl+Shift+Space".into(), "Ctrl+Alt+Space".into()] };
+            for t in tries {
+                match super::register_hotkey(m, None, &t) {
+                    Ok(h) => { cur = Some(h); hotkey_label = t; break; }
+                    Err(e) => crate::log(&format!("{t} {e}")),
                 }
             }
-            None
-        });
-        Ok(Shell { open_id: open.id().clone(), quit_id: quit.id().clone(), auto, _tray: tray, _hk: hk, hotkey_label })
+        }
+        Ok(Shell { open_id: open.id().clone(), quit_id: quit.id().clone(), auto, _tray: tray, hk, cur, hotkey_label })
     }
 
     impl Shell {
+
+        pub fn set_hotkey(&mut self, spec: &str) -> Result<(), String> {
+            let m = self.hk.as_ref().ok_or("kısayol sistemi yok")?;
+            let h = super::register_hotkey(m, self.cur, spec)?;
+            self.cur = Some(h);
+            self.hotkey_label = spec.trim().to_string();
+            Ok(())
+        }
         pub fn poll(&self) -> Vec<Ev> {
             let mut out = vec![];
             while let Ok(e) = TrayIconEvent::receiver().try_recv() {
@@ -134,7 +164,7 @@ mod imp {
 #[cfg(target_os = "linux")]
 mod imp {
     use super::Ev;
-    use global_hotkey::{hotkey::{Code, HotKey, Modifiers}, GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
+    use global_hotkey::{hotkey::HotKey, GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
     use ksni::blocking::TrayMethods;
     use std::io::{Read, Write};
     use std::os::unix::net::{UnixListener, UnixStream};
@@ -228,26 +258,37 @@ mod imp {
 
     pub struct Shell {
         _tray: ksni::blocking::Handle<Tray>,
-        _hk: Option<GlobalHotKeyManager>,
+        hk: Option<GlobalHotKeyManager>,
+        cur: Option<HotKey>,
         rx: Receiver<Ev>,
         pub hotkey_label: String,
     }
 
-    pub fn shell(autostart: bool) -> Result<Shell, String> {
+    pub fn shell(autostart: bool, hotkey: Option<String>) -> Result<Shell, String> {
         let (tx, rx) = channel();
         let tray = Tray { tx, auto: autostart }.spawn().map_err(|e| format!("tray (StatusNotifier): {e}"))?;
-        let mut hotkey_label = String::new();
         // Yalnız X11'de çalışır; Wayland'de sistem kısayoluna `YarinYaparim --panel` bağlanır.
-        let hk = GlobalHotKeyManager::new().map_err(|e| crate::log(&format!("kısayol yöneticisi: {e}"))).ok().and_then(|m| {
-            match m.register(HotKey::new(Some(Modifiers::CONTROL), Code::Space)) {
-                Ok(()) => { hotkey_label = "Ctrl+Space".into(); Some(m) }
-                Err(e) => { crate::log(&format!("Ctrl+Space alınamadı: {e}")); None }
+        let hk = GlobalHotKeyManager::new().map_err(|e| crate::log(&format!("kısayol yöneticisi: {e}"))).ok();
+        let spec = hotkey.unwrap_or_else(|| "Ctrl+Space".into());
+        let (mut cur, mut hotkey_label) = (None, String::new());
+        if let Some(m) = &hk {
+            match super::register_hotkey(m, None, &spec) {
+                Ok(h) => { cur = Some(h); hotkey_label = spec; }
+                Err(e) => crate::log(&format!("{spec} {e}")),
             }
-        });
-        Ok(Shell { _tray: tray, _hk: hk, rx, hotkey_label })
+        }
+        Ok(Shell { _tray: tray, hk, cur, rx, hotkey_label })
     }
 
     impl Shell {
+
+        pub fn set_hotkey(&mut self, spec: &str) -> Result<(), String> {
+            let m = self.hk.as_ref().ok_or("kısayol sistemi yok")?;
+            let h = super::register_hotkey(m, self.cur, spec)?;
+            self.cur = Some(h);
+            self.hotkey_label = spec.trim().to_string();
+            Ok(())
+        }
         pub fn poll(&self) -> Vec<Ev> {
             let mut out: Vec<Ev> = self.rx.try_iter().collect();
             while let Ok(e) = GlobalHotKeyEvent::receiver().try_recv() {
@@ -267,8 +308,8 @@ mod imp {
     pub fn set_autostart(_on: bool) {}
     pub fn work_area() -> Option<(i32, i32, i32, i32)> { None }
     pub struct Shell { pub hotkey_label: String }
-    pub fn shell(_a: bool) -> Result<Shell, String> { Err("bu platformda tray yok".into()) }
-    impl Shell { pub fn poll(&self) -> Vec<Ev> { vec![] } }
+    pub fn shell(_a: bool, _h: Option<String>) -> Result<Shell, String> { Err("bu platformda tray yok".into()) }
+    impl Shell { pub fn poll(&self) -> Vec<Ev> { vec![] } pub fn set_hotkey(&mut self, _s: &str) -> Result<(), String> { Err("yok".into()) } }
 }
 
 pub use imp::*;

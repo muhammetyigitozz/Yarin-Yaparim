@@ -12,6 +12,11 @@ slint = { version = "1.19", features = ["unstable-winit-030"] }
 rusqlite = { version = "0.43", features = ["bundled"] }
 chrono = "0.4"
 
+[dependencies.notify-rust]
+version = "4"
+default-features = false
+features = ["z"]
+
 [target.'cfg(windows)'.dependencies]
 tray-icon = "0.26"
 global-hotkey = "0.10"

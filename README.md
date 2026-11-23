@@ -5,11 +5,12 @@ Projeler için hafif, koyu temalı bir masaüstü yapılacaklar listesi. Rust + 
 ## Özellikler
 - Projeler (renkli), görevler, alt görevler, öncelik, sürükle-bırak sıralama
 - Deadline'lı veya deadline'sız görev; Türkçe hızlı giriş:
-  `FLIR testi cuma 14:00 ! #Stim` → başlık, tarih, saat, öncelik, proje
+  `Calculus Ödevi cuma 14:00 ! #Okul` → başlık, tarih, saat, öncelik, proje
   (bugün, yarın, öbür gün, haftaya, pzt…paz, `2 Ara`, `25.11`, `+3`, `3 gün sonra`, `14:00`)
 - "Yakında" görünümü: tüm projelerdeki tarihli işler
 - Kapat (X) → tray'e gizlenir; tray sağ tık → Ana pencere / Windows ile başlat / Çık
-- Tray paneli: sol tık veya **Ctrl+Space** → geciken ve 7 gün içindeki işler, proje seçerek hızlı ekleme
+- Deadline bildirimleri: 24 saat kala ve zamanı gelince (yalnız tarihli görevlerde 09:00)
+- Tray paneli: sol tık veya **Ctrl+Space** (sol alttaki "Panel kısayolu" yazısına tıklayıp değiştirilebilir) → geciken ve 7 gün içindeki işler, proje seçerek hızlı ekleme
 - Tek örnek; Windows açılışında gizli başlar (`--hidden`)
 - Veriler: Windows'ta `%APPDATA%\YarinYaparim\veri.db`, Linux'ta `~/.local/share/YarinYaparim/veri.db` (SQLite)
 
@@ -43,8 +44,37 @@ cargo build --release
 ## Yol haritası
 - [x] Ana pencere, projeler, görevler
 - [x] Tray, otomatik başlatma, tray paneli, kısayol
-- [ ] Deadline bildirimleri
+- [x] Deadline bildirimleri
+- [x] Değiştirilebilir panel kısayolu
 - [ ] MCP sunucusu (Claude'un görev ekleyebilmesi için)
+
+## MCP kurulumu (Claude'un görev ekleyebilmesi) — yakında
+> Bu bölüm 4. aşamada gelecek MCP sunucusu içindir; şu anki sürümde `--mcp` henüz yok.
+
+Aynı exe `--mcp` bayrağıyla stdio MCP sunucusu olarak çalışır ve uygulamayla aynı veritabanını kullanır. Uygulama açıksa değişiklikler ~1 saniye içinde ekrana yansır.
+
+**Claude Desktop** — `claude_desktop_config.json` dosyasına ekle
+(Windows: `%APPDATA%\Claude\claude_desktop_config.json`, Linux: `~/.config/Claude/claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "yarin-yaparim": {
+      "command": "C:\\Users\\KULLANICI\\Downloads\\YarınYaparım\\Yarın Yaparım.exe",
+      "args": ["--mcp"]
+    }
+  }
+}
+```
+Linux'ta `command` için `/home/KULLANICI/.../YarinYaparim` yolunu yaz. Kaydettikten sonra Claude Desktop'ı tamamen kapatıp yeniden aç.
+
+**Claude Code**:
+```
+claude mcp add yarin-yaparim -- "C:\Users\KULLANICI\Downloads\YarınYaparım\Yarın Yaparım.exe" --mcp
+```
+
+**Araçlar**: `list_projects`, `add_project`, `list_tasks` (proje / tarih aralığı / yalnız açık), `add_task` (başlık, proje, deadline, öncelik, üst görev; Türkçe tarih ifadesi kabul eder: "cuma 14:00"), `update_task`, `complete_task`, `delete_task`.
+
+Örnek: *"Calculus ödevini Okul projesine cuma 14:00 deadline'la öncelikli ekle"* → Claude `add_task` çağırır, görev uygulamada belirir.
 
 ## Lisanslar
 Fontlar (Overpass, Literata) SIL Open Font License 1.1 ile dağıtılır; bkz. `ui/fonts/*-OFL.txt`.

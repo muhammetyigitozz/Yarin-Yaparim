@@ -195,6 +195,17 @@ impl Db {
         tx.commit().unwrap();
     }
 
+    /// Bildirim için: açık, tarihli üst görevler + notified bitleri
+    pub fn notify_candidates(&self) -> Vec<(Task, i64)> {
+        let sql = format!("SELECT {TASK_COLS}, notified FROM tasks WHERE done=0 AND parent_id IS NULL AND due_date IS NOT NULL AND notified < 3");
+        let mut s = self.c.prepare(&sql).unwrap();
+        s.query_map([], |r| Ok((row_task(r)?, r.get(8)?))).unwrap().filter_map(Result::ok).collect()
+    }
+
+    pub fn set_notified(&self, id: i64, bits: i64) {
+        let _ = self.c.execute("UPDATE tasks SET notified=? WHERE id=?", params![bits, id]);
+    }
+
     pub fn move_project(&self, id: i64, steps: i64) {
         let mut ids: Vec<i64> = self.projects().iter().map(|p| p.id).collect();
         reorder(&mut ids, id, steps);
